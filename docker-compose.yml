@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  antigravity-mail:
+    build: .
+    container_name: antigravity-mail
+    ports:
+      - "8085:8000"
+    volumes:
+      # Persistent SQLite database volume
+      - ./antigravity_mail.db:/app/antigravity_mail.db
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Herramienta para correos masivos</title>
+    <!-- CSS Estilos -->
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- FontAwesome para Iconos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo-container">
+                <div class="logo-icon"><i class="fa-solid fa-paper-plane-claim">🚀</i></div>
+                <div>
+                    <h1>Herramienta para correos masivos</h1>
+                    <span style="font-size: 0.8rem; color: var(--text-secondary);">Envío Masivo Personalizado</span>
+                </div>
+            </div>
+            <div class="app-badge">Local Engine v1.0.0</div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <div class="dashboard-grid">
+            
+            <!-- Left Column: Config & Files -->
+            <div class="column">
+                
+                <!-- Card 1: Configuración SMTP -->
+                <div class="card">
+                    <div class="card-title">
+                        <i class="fa-solid fa-server"></i> Configuración Servidor SMTP
+                    </div>
+                    <form id="smtp-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="smtp-username">Tu Correo</label>
+                                <input type="email" id="smtp-username" placeholder="ejemplo@gmail.com" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="smtp-password">Contraseña de Aplicación (App Password)</label>
+                                <input type="password" id="smtp-password" placeholder="•••• •••• •••• ••••" required>
+                            </div>
+                        </div>
+
+                        <!-- Toggle Avanzado -->
+                        <div style="text-align: right; margin: 10px 0;">
+                            <span id="toggle-advanced-smtp" style="font-size: 0.8rem; color: var(--accent-cyan); cursor: pointer; user-select: none;">
+                                <i class="fa-solid fa-sliders"></i> Mostrar Ajustes Avanzados
+                            </span>
+                        </div>
+
+                        <!-- Sección de Ajustes Avanzados (Oculta por defecto) -->
+                        <div id="advanced-smtp-section" style="display: none; padding-top: 15px; border-top: 1px dashed rgba(255, 255, 255, 0.08); margin-top: 10px;">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="smtp-host">Servidor SMTP</label>
+                                    <input type="text" id="smtp-host" value="smtp.gmail.com" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="smtp-port">Puerto</label>
+                                    <input type="number" id="smtp-port" value="465" required>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="smtp-sender-email">Correo Remitente Real</label>
+                                <input type="email" id="smtp-sender-email" placeholder="Se llena automáticamente" required>
+                            </div>
+
+                            <div class="form-group toggle-group" style="margin-top: 15px;">
+                                <label class="switch">
+                                    <input type="checkbox" id="smtp-ssl" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span style="font-size: 0.9rem; font-weight: 500;">Usar SSL seguro (Puerto 465)</span>
+                            </div>
+                        </div>
+
+                        <div class="btn-action-row">
+                            <button type="button" id="btn-test-smtp" class="btn btn-secondary">
+                                <i class="fa-solid fa-plug"></i> Probar Conexión
+                            </button>
+                            <button type="submit" id="btn-save-smtp" class="btn btn-primary">
+                                <i class="fa-solid fa-floppy-disk"></i> Guardar Credenciales
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Card 2: Carga de Destinatarios -->
+                <div class="card">
+                    <div class="card-title">
+                        <i class="fa-solid fa-file-excel"></i> Lista de Destinatarios
+                    </div>
+                    <div id="dropzone" class="dropzone">
+                        <div class="dropzone-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                        <div class="file-info" id="dropzone-text">Arrastra tu Excel (.xlsx) o CSV aquí</div>
+                        <div class="file-hint">El archivo debe contener columnas llamadas "Nombre" y "Correo"</div>
+                        <input type="file" id="file-input" accept=".csv, .xlsx" style="display: none;">
+                    </div>
+
+                    <!-- Tabla de Previsualización -->
+                    <div id="preview-section" style="display: none;">
+                        <h4 style="margin: 1.5rem 0 0.5rem 0; font-size: 0.95rem; color: var(--accent-cyan);">
+                            Previsualización de destinatarios (<span id="recipient-count">0</span> cargados)
+                        </h4>
+                        <div class="table-container">
+                            <table id="preview-table">
+                                <thead>
+                                    <tr>
+                                        <th>Nombre</th>
+                                        <th>Correo</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Right Column: Campaign Editor & Realtime Status -->
+            <div class="column">
+                
+                <!-- Card 3: Editor de Mensaje -->
+                <div class="card" id="editor-card">
+                    <div class="card-title">
+                        <i class="fa-solid fa-envelope-open-text"></i> Diseño de la Campaña
+                    </div>
+                    <div class="form-group">
+                        <label for="email-subject">Asunto del Correo</label>
+                        <input type="text" id="email-subject" placeholder="¡Hola {{NOMBRE}}! Tenemos novedades" required>
+                    </div>
+
+                    <div class="form-group">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <label for="email-body" style="margin-bottom: 0;">Contenido del Correo</label>
+                            <span class="app-badge" style="font-size: 0.75rem; padding: 3px 8px; cursor: pointer;" onclick="insertPlaceholder()">
+                                <i class="fa-solid fa-plus"></i> Insertar {{NOMBRE}}
+                            </span>
+                        </div>
+                        <textarea id="email-body" placeholder="Estimado/a {{NOMBRE}},&#10;&#10;Escribe tu mensaje aquí. Puedes usar HTML si lo deseas." required></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Intervalo de Delay (Segundos entre envíos)</label>
+                        <div class="slider-group">
+                            <input type="range" id="delay-slider" min="1" max="60" value="5">
+                            <span class="slider-val" id="delay-val">5s</span>
+                        </div>
+                    </div>
+                    <!-- Live Email Preview Box -->
+                    <div style="margin-top: 1.5rem; padding: 1.25rem; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--glass-border); border-radius: 16px;">
+                        <span style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-cyan); display: block; margin-bottom: 10px; font-weight: 600;">
+                            <i class="fa-solid fa-eye"></i> Vista Previa en Vivo (Destinatario Ejemplo)
+                        </span>
+                        <div style="border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px; margin-bottom: 10px; font-size: 0.85rem; color: var(--text-secondary);">
+                            <div><strong>Para:</strong> Juan Pérez &lt;juan.perez@ejemplo.com&gt;</div>
+                            <div style="margin-top: 4px;"><strong>Asunto:</strong> <span id="preview-subject" style="color: var(--text-primary); font-weight: 500;">-</span></div>
+                        </div>
+                        <div id="preview-body" style="font-size: 0.9rem; min-height: 100px; max-height: 220px; overflow-y: auto; color: var(--text-primary); background: rgba(255,255,255,0.02); padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); white-space: pre-wrap; font-family: var(--font-sans);">
+                            -
+                        </div>
+                    </div>
+
+                    <button type="button" id="btn-start-campaign" class="btn btn-primary" style="margin-top: 1.5rem; background: linear-gradient(135deg, var(--accent-cyan), #00b4d8); box-shadow: 0 4px 15px rgba(0, 242, 254, 0.35);">
+                        <i class="fa-solid fa-rocket"></i> Iniciar Envío Masivo
+                    </button>
+                </div>
+
+                <!-- Card 4: Panel de Progreso Real (Visible cuando está activa o terminada) -->
+                <div class="card progress-card" id="campaign-progress-card" style="display: none;">
+                    <div class="card-title" style="color: var(--accent-cyan);">
+                        <i class="fa-solid fa-chart-line"></i> Progreso de la Campaña
+                    </div>
+                    
+                    <div class="progress-stats">
+                        <div class="stat-box stat-total">
+                            <div class="stat-val" id="stat-total">0</div>
+                            <div class="stat-label">Total</div>
+                        </div>
+                        <div class="stat-box stat-sent">
+                            <div class="stat-val" id="stat-sent">0</div>
+                            <div class="stat-label">Enviados</div>
+                        </div>
+                        <div class="stat-box stat-failed">
+                            <div class="stat-val" id="stat-failed">0</div>
+                            <div class="stat-label">Fallidos</div>
+                        </div>
+                    </div>
+
+                    <div class="current-status">
+                        <span id="campaign-status-text">Iniciando envíos...</span>
+                        <span id="campaign-percentage">0%</span>
+                    </div>
+
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="progress-bar-fill"></div>
+                    </div>
+
+                    <div id="current-recipient-row" style="font-size: 0.85rem; margin-bottom: 1.5rem; color: var(--text-secondary);">
+                        <i class="fa-solid fa-paper-plane" style="color: var(--accent-cyan); margin-right: 6px;"></i> Enviando a: <span id="current-recipient-val" style="color: var(--text-primary); font-weight: 500;">-</span>
+                    </div>
+
+                    <div class="console-logs" id="console-logs">
+                        <!-- Realtime logs terminal -->
+                    </div>
+
+                    <div class="btn-action-row" style="margin-top: 1.5rem;">
+                        <button type="button" id="btn-stop-campaign" class="btn btn-danger">
+                            <i class="fa-solid fa-circle-stop"></i> Detener Campaña
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">
+        <i class="fa-solid fa-circle-info" id="toast-icon"></i>
+        <span id="toast-message">Mensaje guardado</span>
+    </div>
+
+    <!-- JS de la App -->
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
