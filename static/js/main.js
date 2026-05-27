@@ -72,6 +72,8 @@ document.addEventListener('DOMContentLoaded', () => {
             smtpPort.value = 465;
             smtpSsl.checked = true;
         }
+    });
+
     // Live email preview updates
     function updateLivePreview() {
         if (!previewSubject || !previewBody) return;
