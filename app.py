@@ -1,16 +1,12 @@
 import os
 import asyncio
-import threading
-import time
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import smtp_manager
+import scheduler
 
 app = FastAPI(title="Antigravity Mail Campaign Manager")
 
@@ -23,133 +19,73 @@ os.makedirs("static/js", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# --- GLOBAL CAMPAIGN STATE ---
-class CampaignState:
-    def __init__(self):
-        self.is_running = False
-        self.total = 0
-        self.sent = 0
-        self.failed = 0
-        self.logs = []
-        self.should_stop = False
-        self.current_recipient = ""
+# Store the scheduler instance
+app_scheduler = None
 
-campaign = CampaignState()
+@app.on_event("startup")
+async def startup_event():
+    global app_scheduler
+    app_scheduler = scheduler.start_scheduler()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global app_scheduler
+    if app_scheduler:
+        app_scheduler.shutdown()
 
 # WebSocket connections list
 active_connections = []
 
-async def broadcast_campaign_update():
-    state = {
-        "is_running": campaign.is_running,
-        "total": campaign.total,
-        "sent": campaign.sent,
-        "failed": campaign.failed,
-        "progress": int((campaign.sent + campaign.failed) / campaign.total * 100) if campaign.total > 0 else 0,
-        "logs": campaign.logs[-20:],  # last 20 logs
-        "current_recipient": campaign.current_recipient
+def get_current_campaign_state():
+    latest = smtp_manager.get_latest_campaign()
+    if not latest:
+        return {
+            "is_running": False,
+            "total": 0, "sent": 0, "failed": 0, "progress": 0,
+            "logs": [], "current_recipient": ""
+        }
+        
+    campaign_id = latest["id"]
+    stats = smtp_manager.get_campaign_stats(campaign_id)
+    total = stats["total"]
+    sent = stats["sent"]
+    failed = stats["failed"]
+    
+    logs = smtp_manager.get_recent_logs(campaign_id, limit=40)
+    
+    # Get current recipient being processed (the one pending or the last sent)
+    pending = smtp_manager.get_pending_recipients(campaign_id, limit=1)
+    current_recipient = ""
+    if latest["status"] == "active" and pending:
+        current_recipient = f"{pending[0]['name']} <{pending[0]['email']}>"
+        
+    is_running = latest["status"] == "active"
+    
+    status_msg = "Pausada"
+    if is_running:
+        from datetime import datetime
+        now_str = datetime.now().strftime("%H:%M")
+        start_w = latest.get("send_window_start", "08:00")
+        end_w = latest.get("send_window_end", "17:00")
+        if not (start_w <= now_str <= end_w):
+            status_msg = f"Fuera de horario (Espera a las {start_w})"
+        else:
+            status_msg = "Enviando..."
+    elif total == sent + failed:
+        status_msg = "Completada"
+    
+    return {
+        "is_running": is_running,
+        "total": total,
+        "sent": sent,
+        "failed": failed,
+        "progress": int((sent + failed) / total * 100) if total > 0 else 0,
+        "logs": logs,
+        "current_recipient": current_recipient,
+        "status_msg": status_msg,
+        "sent_today": smtp_manager.get_sent_today_count(campaign_id),
+        "daily_limit": latest["daily_limit"]
     }
-    for connection in active_connections:
-        try:
-            await connection.send_json(state)
-        except Exception:
-            pass
-
-# Background Campaign Thread
-def run_campaign_thread(smtp_settings: dict, recipients: list, subject_template: str, body_template: str, delay: float):
-    global campaign
-    campaign.is_running = True
-    campaign.total = len(recipients)
-    campaign.sent = 0
-    campaign.failed = 0
-    campaign.logs = []
-    campaign.should_stop = False
-    
-    server = None
-    
-    def connect_smtp():
-        nonlocal server
-        if smtp_settings["use_ssl"]:
-            server = smtplib.SMTP_SSL(smtp_settings["host"], smtp_settings["port"], timeout=15)
-        else:
-            server = smtplib.SMTP(smtp_settings["host"], smtp_settings["port"], timeout=15)
-            server.starttls()
-        server.login(smtp_settings["username"], smtp_settings["password"])
-
-    try:
-        campaign.logs.append("Iniciando conexión con el servidor SMTP...")
-        connect_smtp()
-        campaign.logs.append("Conexión SMTP establecida exitosamente.")
-    except Exception as e:
-        campaign.logs.append(f"Error al conectar con SMTP: {str(e)}")
-        campaign.is_running = False
-        return
-
-    for idx, recipient in enumerate(recipients):
-        if campaign.should_stop:
-            campaign.logs.append("Campaña detenida manualmente por el usuario.")
-            break
-            
-        name = recipient.get("nombre", "")
-        email = recipient.get("correo", "")
-        campaign.current_recipient = f"{name} <{email}>"
-        
-        # Interpolate placeholders (case insensitive for Nombre)
-        sub = subject_template.replace("{{NOMBRE}}", name).replace("{{Nombre}}", name).replace("{{nombre}}", name)
-        body = body_template.replace("{{NOMBRE}}", name).replace("{{Nombre}}", name).replace("{{nombre}}", name)
-        
-        # Construct Email
-        msg = MIMEMultipart()
-        msg['From'] = f"{smtp_settings.get('sender_name', '')} <{smtp_settings['sender_email']}>" if smtp_settings.get('sender_name') else smtp_settings['sender_email']
-        msg['To'] = email
-        msg['Subject'] = sub
-        
-        # Body can be HTML or Plain text (We'll send HTML if it starts with < or has HTML tags, else plain text)
-        if "<html>" in body.lower() or "<div" in body.lower() or "<p" in body.lower() or "<br" in body.lower():
-            msg.attach(MIMEText(body, 'html'))
-        else:
-            msg.attach(MIMEText(body, 'plain'))
-            
-        # Send Email with retry mechanism
-        sent_successfully = False
-        for attempt in range(2):
-            try:
-                if server is None:
-                    connect_smtp()
-                server.send_message(msg)
-                sent_successfully = True
-                break
-            except Exception as ex:
-                campaign.logs.append(f"Intento {attempt+1} fallido para {email}: {str(ex)}")
-                # Force reconnect on next attempt
-                try:
-                    server.close()
-                except:
-                    pass
-                server = None
-                time.sleep(2)
-                
-        if sent_successfully:
-            campaign.sent += 1
-            campaign.logs.append(f"✅ [Éxito] Correo enviado a {email}")
-        else:
-            campaign.failed += 1
-            campaign.logs.append(f"❌ [Error] No se pudo enviar a {email}")
-            
-        # Delay
-        if idx < len(recipients) - 1:
-            time.sleep(delay)
-            
-    # Cleanup
-    if server:
-        try:
-            server.quit()
-        except:
-            pass
-            
-    campaign.logs.append(f"Campaña finalizada. Éxitos: {campaign.sent}, Errores: {campaign.failed}")
-    campaign.is_running = False
-    campaign.current_recipient = ""
 
 # --- REST ENDPOINTS ---
 
@@ -194,54 +130,101 @@ async def api_parse_recipients(file: UploadFile = File(...)):
     recipients = smtp_manager.parse_recipients_file(content, file.filename)
     return {"status": "success", "count": len(recipients), "recipients": recipients[:100]} # Limit preview to first 100
 
-class CampaignStartSchema(BaseModel):
-    subject: str
-    body: str
-    delay: float
-    recipients: list
+from typing import List
+import json
 
 @app.post("/api/campaign/start")
-async def api_start_campaign(data: CampaignStartSchema):
-    global campaign
-    if campaign.is_running:
+async def api_start_campaign(
+    subject: str = Form(...),
+    body: str = Form(...),
+    daily_limit: int = Form(...),
+    min_delay_seconds: int = Form(...),
+    max_delay_seconds: int = Form(...),
+    pause_after_emails: int = Form(...),
+    pause_duration_minutes: int = Form(...),
+    send_window_start: str = Form("08:00"),
+    send_window_end: str = Form("17:00"),
+    timezone_offset: int = Form(0),
+    recipients: str = Form(...),
+    attachments: List[UploadFile] = File(default=[])
+):
+    # Check if there is already an active campaign
+    active = smtp_manager.get_active_campaigns()
+    if active:
         raise HTTPException(status_code=400, detail="Ya hay una campaña ejecutándose actualmente.")
         
     settings = smtp_manager.get_smtp_settings()
     if not settings:
         raise HTTPException(status_code=400, detail="Por favor configura y guarda las credenciales SMTP primero.")
         
-    if not data.recipients:
+    try:
+        recipients_list = json.loads(recipients)
+    except Exception:
+        raise HTTPException(status_code=400, detail="El formato de los destinatarios es inválido.")
+        
+    if not recipients_list:
         raise HTTPException(status_code=400, detail="La lista de destinatarios está vacía.")
         
-    # Start campaign in a separate background thread
-    thread = threading.Thread(
-        target=run_campaign_thread,
-        args=(settings, data.recipients, data.subject, data.body, data.delay)
-    )
-    thread.daemon = True
-    thread.start()
+    # Check total size
+    total_size = 0
+    valid_attachments = [a for a in attachments if a.filename]
     
-    return {"status": "success", "message": "Campaña iniciada con éxito."}
+    for attachment in valid_attachments:
+        content = await attachment.read()
+        total_size += len(content)
+        await attachment.seek(0)
+        
+    if total_size > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="El tamaño total de los archivos adjuntos supera los 25 MB.")
+        
+    # Create campaign and recipients in DB
+    campaign_id = smtp_manager.create_campaign(
+        subject=subject,
+        body=body,
+        daily_limit=daily_limit,
+        min_delay=min_delay_seconds,
+        max_delay=max_delay_seconds,
+        pause_after=pause_after_emails,
+        pause_duration=pause_duration_minutes,
+        send_window_start=send_window_start,
+        send_window_end=send_window_end,
+        timezone_offset=timezone_offset,
+        recipients_list=recipients_list
+    )
+    
+    # Save attachments physically and in DB
+    if valid_attachments:
+        attach_dir = f"/app/data/attachments/{campaign_id}"
+        os.makedirs(attach_dir, exist_ok=True)
+        for attachment in valid_attachments:
+            file_path = os.path.join(attach_dir, attachment.filename)
+            content = await attachment.read()
+            with open(file_path, "wb") as f:
+                f.write(content)
+            smtp_manager.save_attachment(campaign_id, attachment.filename, file_path)
+    
+    return {"status": "success", "message": "Campaña guardada e iniciada con éxito."}
 
 @app.post("/api/campaign/stop")
 async def api_stop_campaign():
-    global campaign
-    if not campaign.is_running:
-        return {"status": "success", "message": "No hay ninguna campaña activa."}
-    campaign.should_stop = True
-    return {"status": "success", "message": "Deteniendo campaña..."}
+    latest = smtp_manager.get_latest_campaign()
+    if latest and latest["status"] == "active":
+        smtp_manager.update_campaign_status(latest["id"], "paused")
+        return {"status": "success", "message": "Campaña pausada."}
+    return {"status": "success", "message": "No hay ninguna campaña activa."}
+
+@app.post("/api/campaign/abort")
+async def api_abort_campaign():
+    latest = smtp_manager.get_latest_campaign()
+    if latest and latest["status"] == "active":
+        smtp_manager.update_campaign_status(latest["id"], "aborted")
+        smtp_manager.delete_attachments_from_disk_and_db(latest["id"])
+        return {"status": "success", "message": "Campaña abortada."}
+    return {"status": "success", "message": "No hay ninguna campaña activa."}
 
 @app.get("/api/campaign/status")
 async def api_campaign_status():
-    return {
-        "is_running": campaign.is_running,
-        "total": campaign.total,
-        "sent": campaign.sent,
-        "failed": campaign.failed,
-        "progress": int((campaign.sent + campaign.failed) / campaign.total * 100) if campaign.total > 0 else 0,
-        "logs": campaign.logs[-40:],  # last 40 logs
-        "current_recipient": campaign.current_recipient
-    }
+    return get_current_campaign_state()
 
 # --- WEBSOCKET FOR REALTIME CAMPAIGN PROGRESS ---
 @app.websocket("/ws/campaign")
@@ -249,32 +232,10 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.append(websocket)
     try:
-        # Send initial status
-        state = {
-            "is_running": campaign.is_running,
-            "total": campaign.total,
-            "sent": campaign.sent,
-            "failed": campaign.failed,
-            "progress": int((campaign.sent + campaign.failed) / campaign.total * 100) if campaign.total > 0 else 0,
-            "logs": campaign.logs[-40:],
-            "current_recipient": campaign.current_recipient
-        }
-        await websocket.send_json(state)
-        
         while True:
-            # Periodically broadcast state if running
-            if campaign.is_running:
-                state = {
-                    "is_running": campaign.is_running,
-                    "total": campaign.total,
-                    "sent": campaign.sent,
-                    "failed": campaign.failed,
-                    "progress": int((campaign.sent + campaign.failed) / campaign.total * 100) if campaign.total > 0 else 0,
-                    "logs": campaign.logs[-40:],
-                    "current_recipient": campaign.current_recipient
-                }
-                await websocket.send_json(state)
-            await asyncio.sleep(0.5)
+            state = get_current_campaign_state()
+            await websocket.send_json(state)
+            await asyncio.sleep(1.0) # Poll every 1 second
     except WebSocketDisconnect:
         active_connections.remove(websocket)
     except Exception:

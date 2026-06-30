@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY app.py .
 COPY smtp_manager.py .
+COPY scheduler.py .
 COPY static/ ./static/
 COPY templates/ ./templates/
 

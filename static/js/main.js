@@ -1,5 +1,6 @@
 // --- STATE MANAGEMENT ---
 let recipientsList = [];
+let selectedAttachments = [];
 let campaignSocket = null;
 let pollInterval = null;
 
@@ -25,15 +26,30 @@ const previewTableBody = document.querySelector('#preview-table tbody');
 
 const emailSubject = document.getElementById('email-subject');
 const emailBody = document.getElementById('email-body');
-const delaySlider = document.getElementById('delay-slider');
-const delayVal = document.getElementById('delay-val');
+const minDelaySlider = document.getElementById('min-delay-slider');
+const minDelayVal = document.getElementById('min-delay-val');
+const maxDelaySlider = document.getElementById('max-delay-slider');
+const maxDelayVal = document.getElementById('max-delay-val');
+const pauseAfter = document.getElementById('pause-after');
+const pauseDuration = document.getElementById('pause-duration');
+const sendWindowStart = document.getElementById('send-window-start');
+const sendWindowEnd = document.getElementById('send-window-end');
 const btnStartCampaign = document.getElementById('btn-start-campaign');
 const btnStopCampaign = document.getElementById('btn-stop-campaign');
+const btnAbortCampaign = document.getElementById('btn-abort-campaign');
+const dailyLimit = document.getElementById('daily-limit');
+
+// Attachments DOM
+const attachmentsDropzone = document.getElementById('attachments-dropzone');
+const attachmentsDropzoneText = document.getElementById('attachments-dropzone-text');
+const attachmentsInput = document.getElementById('attachments-input');
+const attachmentsList = document.getElementById('attachments-list');
 
 const progressCard = document.getElementById('campaign-progress-card');
 const statTotal = document.getElementById('stat-total');
 const statSent = document.getElementById('stat-sent');
 const statFailed = document.getElementById('stat-failed');
+const statToday = document.getElementById('stat-today');
 const progressBarFill = document.getElementById('progress-bar-fill');
 const campaignPercentage = document.getElementById('campaign-percentage');
 const campaignStatusText = document.getElementById('campaign-status-text');
@@ -82,13 +98,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const bodyVal = emailBody.value || '';
         
         // Interpolate placeholder for preview with a green highlighted name
-        const dummyName = '<strong style="color: var(--accent-success);">Juan Pérez</strong>';
+        const dummyName = '<strong style="color: var(--accent-violet);">Juan Pérez</strong>';
         const parsedSubject = subVal.replace(/\{\{NOMBRE\}\}/gi, "Juan Pérez");
         let parsedBody = bodyVal.replace(/\{\{NOMBRE\}\}/gi, dummyName);
         
         previewSubject.textContent = parsedSubject || '(Sin Asunto)';
         
-        if (parsedBody.toLowerCase().includes("<html>") || parsedBody.toLowerCase().includes("<div") || parsedBody.toLowerCase().includes("<p") || parsedBody.toLowerCase().includes("<br")) {
+        if (parsedBody.toLowerCase().includes("<html>") || parsedBody.toLowerCase().includes("<div") || parsedBody.toLowerCase().includes("<p") || parsedBody.toLowerCase().includes("<br") || parsedBody.toLowerCase().includes("<a")) {
             previewBody.innerHTML = parsedBody || '(Mensaje Vacío)';
         } else {
             // Replace newlines with <br> to preserve formatting in simulated inbox
@@ -105,6 +121,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initial call
     updateLivePreview();
+
+    // Init Attachment triggers
+    setupAttachmentsUI();
 });
 
 // --- TOAST NOTIFICATIONS ---
@@ -220,7 +239,6 @@ smtpForm.addEventListener('submit', async (e) => {
 });
 
 // --- RECIPIENTS FILE UPLOAD ---
-// Drag and Drop Effects
 dropzone.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', (e) => {
@@ -285,9 +303,21 @@ async function handleFile(file) {
 }
 
 // --- TEMPLATE EDITING HELPERS ---
-// Delay Slider
-delaySlider.addEventListener('input', (e) => {
-    delayVal.textContent = e.target.value + 's';
+// Delay Sliders
+minDelaySlider.addEventListener('input', (e) => {
+    minDelayVal.textContent = e.target.value + 's';
+    if (parseInt(minDelaySlider.value) > parseInt(maxDelaySlider.value)) {
+        maxDelaySlider.value = minDelaySlider.value;
+        maxDelayVal.textContent = minDelaySlider.value + 's';
+    }
+});
+
+maxDelaySlider.addEventListener('input', (e) => {
+    maxDelayVal.textContent = e.target.value + 's';
+    if (parseInt(maxDelaySlider.value) < parseInt(minDelaySlider.value)) {
+        minDelaySlider.value = maxDelaySlider.value;
+        minDelayVal.textContent = maxDelaySlider.value + 's';
+    }
 });
 
 // Insert Placeholder Helper
@@ -302,18 +332,146 @@ function insertPlaceholder() {
     emailBody.selectionStart = startPos + textToInsert.length;
     emailBody.selectionEnd = startPos + textToInsert.length;
     
-    // Update live preview dynamically
     if (window.updateLivePreview) {
         window.updateLivePreview();
     }
 }
 
+// Insert Placeholder Subject Helper
+function insertPlaceholderSubject() {
+    const textToInsert = '{{NOMBRE}}';
+    const startPos = emailSubject.selectionStart;
+    const endPos = emailSubject.selectionEnd;
+    const textVal = emailSubject.value;
+    
+    emailSubject.value = textVal.substring(0, startPos) + textToInsert + textVal.substring(endPos, textVal.length);
+    emailSubject.focus();
+    emailSubject.selectionStart = startPos + textToInsert.length;
+    emailSubject.selectionEnd = startPos + textToInsert.length;
+    
+    if (window.updateLivePreview) {
+        window.updateLivePreview();
+    }
+}
+window.insertPlaceholderSubject = insertPlaceholderSubject;
+
+// Insert Link Helper
+function insertLinkHelper() {
+    const url = prompt("Introduce la dirección de tu enlace (URL):", "https://");
+    if (url === null || url.trim() === "" || url === "https://") return;
+
+    const label = prompt("Introduce el texto que verá el usuario para hacer clic:", "Haz clic aquí");
+    if (label === null || label.trim() === "") return;
+
+    const linkHtml = `<a href="${url.trim()}" target="_blank">${label.trim()}</a>`;
+    
+    const startPos = emailBody.selectionStart;
+    const endPos = emailBody.selectionEnd;
+    const textVal = emailBody.value;
+    
+    emailBody.value = textVal.substring(0, startPos) + linkHtml + textVal.substring(endPos, textVal.length);
+    emailBody.focus();
+    emailBody.selectionStart = startPos + linkHtml.length;
+    emailBody.selectionEnd = startPos + linkHtml.length;
+    
+    if (window.updateLivePreview) {
+        window.updateLivePreview();
+    }
+}
+
+// --- ATTACHMENTS MANAGEMENT ---
+function setupAttachmentsUI() {
+    attachmentsDropzone.addEventListener('click', () => attachmentsInput.click());
+    
+    attachmentsInput.addEventListener('change', (e) => {
+        handleAttachmentsSelect(e.target.files);
+    });
+    
+    attachmentsDropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        attachmentsDropzone.classList.add('dragover');
+    });
+    
+    attachmentsDropzone.addEventListener('dragleave', () => {
+        attachmentsDropzone.classList.remove('dragover');
+    });
+    
+    attachmentsDropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        attachmentsDropzone.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+            handleAttachmentsSelect(e.dataTransfer.files);
+        }
+    });
+}
+
+function handleAttachmentsSelect(files) {
+    const totalCurrentSize = selectedAttachments.reduce((sum, f) => sum + f.size, 0);
+    let extraSize = 0;
+    
+    const newFiles = Array.from(files);
+    for (let f of newFiles) {
+        extraSize += f.size;
+    }
+    
+    // Check Gmail Limit: 25MB (26214400 bytes)
+    if (totalCurrentSize + extraSize > 25 * 1024 * 1024) {
+        showToast('El límite máximo total para archivos adjuntos es de 25 MB.', 'error');
+        return;
+    }
+    
+    for (let f of newFiles) {
+        // Prevent duplicate file names in selection
+        if (!selectedAttachments.some(existing => existing.name === f.name)) {
+            selectedAttachments.push(f);
+        }
+    }
+    
+    renderAttachmentsList();
+}
+
+function renderAttachmentsList() {
+    attachmentsList.innerHTML = '';
+    
+    if (selectedAttachments.length === 0) {
+        attachmentsDropzoneText.innerHTML = 'Arrastra archivos para adjuntar o haz clic aquí';
+        return;
+    }
+    
+    const totalMB = (selectedAttachments.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024)).toFixed(2);
+    attachmentsDropzoneText.innerHTML = `<i class="fa-solid fa-circle-check" style="color: var(--accent-success);"></i> ${selectedAttachments.length} archivos adjuntos (${totalMB} MB)`;
+    
+    selectedAttachments.forEach((file, index) => {
+        const item = document.createElement('div');
+        item.className = 'attachment-item';
+        
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        
+        item.innerHTML = `
+            <div class="attachment-name">
+                <i class="fa-solid fa-file-arrow-up" style="color: var(--accent-violet);"></i>
+                <span>${file.name} <small style="color: var(--text-secondary);">(${sizeMB} MB)</small></span>
+            </div>
+            <span class="attachment-remove" onclick="removeAttachment(${index})">
+                <i class="fa-solid fa-circle-xmark"></i>
+            </span>
+        `;
+        attachmentsList.appendChild(item);
+    });
+}
+
+function removeAttachment(index) {
+    selectedAttachments.splice(index, 1);
+    renderAttachmentsList();
+}
+
+// Make it globally accessible for the onclick remove button
+window.removeAttachment = removeAttachment;
+
 // --- CAMPAIGN REAL-TIME UPDATES (WEBSOCKET & SSE FALLBACK) ---
 function startRealtimeConnection() {
-    // Clear old polling intervals if any
     if (pollInterval) clearInterval(pollInterval);
     
-    // Construct websocket URL
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/campaign`;
     
@@ -360,19 +518,30 @@ function updateCampaignUI(state) {
     statTotal.textContent = state.total;
     statSent.textContent = state.sent;
     statFailed.textContent = state.failed;
+    if (statToday && state.daily_limit !== undefined) {
+        statToday.textContent = `${state.sent_today} / ${state.daily_limit}`;
+    }
     progressBarFill.style.width = state.progress + '%';
     campaignPercentage.textContent = state.progress + '%';
     
+    if (state.is_running || state.sent > 0 || state.failed > 0) {
+        progressCard.style.display = 'block';
+    }
+
     if (state.is_running) {
         btnStartCampaign.disabled = true;
         btnStartCampaign.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Campaña en curso...';
-        campaignStatusText.textContent = 'Enviando correos...';
+        campaignStatusText.textContent = state.status_msg || 'Enviando correos...';
         currentRecipientVal.textContent = state.current_recipient || '-';
+        btnStopCampaign.disabled = false;
+        if (btnAbortCampaign) btnAbortCampaign.disabled = false;
     } else {
         btnStartCampaign.disabled = false;
         btnStartCampaign.innerHTML = '<i class="fa-solid fa-rocket"></i> Iniciar Envío Masivo';
-        campaignStatusText.textContent = 'Campaña completada o inactiva';
+        campaignStatusText.textContent = state.status_msg || 'Campaña inactiva';
         currentRecipientVal.textContent = '-';
+        btnStopCampaign.disabled = true;
+        if (btnAbortCampaign) btnAbortCampaign.disabled = true;
         if (pollInterval) clearInterval(pollInterval);
     }
     
@@ -392,7 +561,6 @@ function updateCampaignUI(state) {
         consoleLogs.appendChild(div);
     });
     
-    // Auto scroll down console
     consoleLogs.scrollTop = consoleLogs.scrollHeight;
 }
 
@@ -413,12 +581,26 @@ btnStartCampaign.addEventListener('click', async () => {
         return;
     }
     
-    const campaignData = {
-        subject: emailSubject.value,
-        body: emailBody.value,
-        delay: parseFloat(delaySlider.value),
-        recipients: recipientsList
-    };
+    // Construct Form Data to handle attachments
+    const formData = new FormData();
+    formData.append('subject', emailSubject.value);
+    formData.append('body', emailBody.value);
+    formData.append('daily_limit', parseInt(dailyLimit.value) || 200);
+    formData.append('min_delay_seconds', parseInt(minDelaySlider.value) || 5);
+    formData.append('max_delay_seconds', parseInt(maxDelaySlider.value) || 15);
+    formData.append('pause_after_emails', parseInt(pauseAfter.value) || 0);
+    formData.append('pause_duration_minutes', parseInt(pauseDuration.value) || 0);
+    formData.append('send_window_start', sendWindowStart.value || '08:00');
+    formData.append('send_window_end', sendWindowEnd.value || '17:00');
+    
+    const tzOffset = -new Date().getTimezoneOffset();
+    formData.append('timezone_offset', tzOffset);
+    
+    formData.append('recipients', JSON.stringify(recipientsList));
+    
+    selectedAttachments.forEach(file => {
+        formData.append('attachments', file);
+    });
     
     try {
         btnStartCampaign.disabled = true;
@@ -426,8 +608,7 @@ btnStartCampaign.addEventListener('click', async () => {
         
         const response = await fetch('/api/campaign/start', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(campaignData)
+            body: formData // Let browser set the multipart Content-Type header with boundaries
         });
         
         const data = await response.json();
@@ -451,12 +632,27 @@ btnStopCampaign.addEventListener('click', async () => {
     try {
         const response = await fetch('/api/campaign/stop', { method: 'POST' });
         if (response.ok) {
-            showToast('Comando de detención enviado.', 'info');
+            showToast('Comando de detención/pausa enviado.', 'info');
         }
     } catch (e) {
         showToast('Error al detener la campaña.', 'error');
     }
 });
+
+// Abort Campaign Trigger
+if (btnAbortCampaign) {
+    btnAbortCampaign.addEventListener('click', async () => {
+        if (!confirm('¿Estás seguro de que deseas abortar la campaña? Esto detendrá permanentemente los envíos y eliminará los archivos adjuntos del servidor.')) return;
+        try {
+            const response = await fetch('/api/campaign/abort', { method: 'POST' });
+            if (response.ok) {
+                showToast('Campaña abortada y archivos eliminados.', 'info');
+            }
+        } catch (e) {
+            showToast('Error al abortar la campaña.', 'error');
+        }
+    });
+}
 
 // Check status on load in case a campaign is already running
 async function checkActiveCampaign() {
