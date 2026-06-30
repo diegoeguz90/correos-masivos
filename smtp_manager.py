@@ -10,7 +10,7 @@ from email.mime.text import MIMEText
 import openpyxl
 
 # --- DATABASE SETUP ---
-DB_PATH = "antigravity_mail.db"
+DB_PATH = "/app/data/antigravity_mail.db"
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
