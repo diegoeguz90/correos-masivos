@@ -279,15 +279,17 @@ async function handleFile(file) {
         const data = await response.json();
         if (response.ok && data.status === 'success') {
             recipientsList = data.recipients;
-            recipientCount.textContent = recipientsList.length;
+            recipientCount.textContent = data.count;
             
-            // Populate Preview Table
+            // Populate Preview Table - limit rendering to first 100 to avoid freezing the DOM
             previewTableBody.innerHTML = '';
-            recipientsList.forEach(rec => {
+            const previewLimit = Math.min(recipientsList.length, 100);
+            for (let i = 0; i < previewLimit; i++) {
+                const rec = recipientsList[i];
                 const tr = document.createElement('tr');
                 tr.innerHTML = `<td>${rec.nombre}</td><td>${rec.correo}</td>`;
                 previewTableBody.appendChild(tr);
-            });
+            }
             
             dropzoneText.innerHTML = `<i class="fa-solid fa-file-circle-check" style="color: var(--accent-success);"></i> ${file.name}`;
             previewSection.style.display = 'block';

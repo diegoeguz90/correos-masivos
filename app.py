@@ -128,7 +128,7 @@ async def api_test_smtp(settings: SmtpSettingsSchema):
 async def api_parse_recipients(file: UploadFile = File(...)):
     content = await file.read()
     recipients = smtp_manager.parse_recipients_file(content, file.filename)
-    return {"status": "success", "count": len(recipients), "recipients": recipients[:100]} # Limit preview to first 100
+    return {"status": "success", "count": len(recipients), "recipients": recipients}
 
 from typing import List
 import json
